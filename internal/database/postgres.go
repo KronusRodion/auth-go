@@ -7,10 +7,9 @@ import (
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
-
 var DB *pgxpool.Pool
 
-func InitDB(dbURL string) error {
+func Init(dbURL string) error {
 
 	config, err := pgxpool.ParseConfig(dbURL)
 	if err != nil {
