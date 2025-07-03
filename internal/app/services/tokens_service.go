@@ -1,12 +1,15 @@
 package tokens
 
 import (
+	"bytes"
 	"context"
 	"crypto/rand"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"sync"
 	"time"
 
@@ -19,7 +22,8 @@ type TokenService struct {
 	db        *pgxpool.Pool
 	jwtSecret []byte
 	blacklist     map[string]time.Time
-    blacklistMux  sync.RWMutex 
+    blacklistMux  sync.RWMutex
+	SecurityWebhookURL string
 }
 
 func (ts *TokenService) InvalidateToken(token string, expiry time.Time) {
@@ -47,23 +51,23 @@ func (ts *TokenService) IsTokenInvalid(token string) bool {
     return true
 }
 
-func NewTokenService(db *pgxpool.Pool, jwtSecret string) *TokenService {
+func NewTokenService(db *pgxpool.Pool, jwtSecret, webhookURL string) *TokenService {
 	return &TokenService{
-		db:        db,
-		jwtSecret: []byte(jwtSecret),
+		db:                db,
+		jwtSecret:         []byte(jwtSecret),
+		blacklist:         make(map[string]time.Time),
+		blacklistMux:      sync.RWMutex{},
+		SecurityWebhookURL: webhookURL,
 	}
 }
 
-type TokenPair struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-}
 
 type RefreshToken struct {
 	UserID           string
 	RefreshTokenHash string
 	ClientIP         string
 	CreatedAt        time.Time
+	UserAgent        string
 }
 
 func (ts *TokenService) GenerateAccessToken(userGUID, clientIP string) (string, error) {
@@ -86,7 +90,7 @@ func (ts *TokenService) GenerateRefreshToken() (string, error) {
 }
 
 //Сохраняем рефреш в бд
-func (ts *TokenService) StoreRefreshToken(userGUID, token, clientIP string, ctx context.Context) error {
+func (ts *TokenService) StoreRefreshToken(userGUID, token, clientIP, userAgent string, ctx context.Context) error {
 	if _, err := base64.URLEncoding.WithPadding(base64.NoPadding).DecodeString(token); err != nil {
 		return fmt.Errorf("invalid base64 token: %w", err)
 	}
@@ -97,26 +101,32 @@ func (ts *TokenService) StoreRefreshToken(userGUID, token, clientIP string, ctx 
 	}
 	
 	_, err = ts.db.Exec(ctx,
-		"INSERT INTO refresh_tokens (user_id, refresh_token_hash, client_ip, created_at) VALUES ($1, $2, $3, $4)",
-		userGUID, hash, clientIP, time.Now(),
+		"INSERT INTO refresh_tokens (user_id, refresh_token_hash, client_ip, created_at, user_agent) VALUES ($1, $2, $3, $4, $5)",
+		userGUID, hash, clientIP, time.Now(), userAgent,
 	)
 	return err
 }
 
 //Проверяем рефреш
-func (ts *TokenService) VerifyRefreshToken(userGUID, token, clientIP string, ctx context.Context) (bool, error) {
+func (ts *TokenService) VerifyRefreshToken(userGUID, token, clientIP, userAgent string, ctx context.Context) (bool, error) {
 	if _, err := base64.URLEncoding.WithPadding(base64.NoPadding).DecodeString(token); err != nil {
 		return false, fmt.Errorf("invalid base64 format: %w", err)
 	}
 	
 	var entry RefreshToken
 	err := ts.db.QueryRow(ctx,
-		`SELECT refresh_token_hash, client_ip 
+		`SELECT refresh_token_hash, client_ip, user_agent 
 		 FROM refresh_tokens 
 		 WHERE user_id = $1 
 		 ORDER BY created_at DESC LIMIT 1`,
 		userGUID,
 	).Scan(&entry.RefreshTokenHash, &entry.ClientIP)
+
+	if entry.UserAgent != userAgent {
+		log.Printf("Security warning: user agent changed for user %s (%s -> %s)", 
+			userGUID, entry.UserAgent, userAgent)
+		return false, errors.New("differrent user agent")
+	}
 	
 	if err != nil {
 		return false, fmt.Errorf("database error: %w", err)
@@ -132,6 +142,7 @@ func (ts *TokenService) VerifyRefreshToken(userGUID, token, clientIP string, ctx
 	if entry.ClientIP != clientIP {
 		log.Printf("Security warning: IP changed for user %s (%s -> %s)", 
 			userGUID, entry.ClientIP, clientIP)
+		ts.notifyIPChange(userGUID, entry.ClientIP, clientIP)
 	}
 	
 	if _, err := ts.db.Exec(ctx,
@@ -190,8 +201,43 @@ func (ts *TokenService) Delete(userGUID, access_token string, expiry time.Time, 
 		return err
 	}
 	ts.InvalidateToken(access_token, expiry)
-
-
 	return nil
 }
 
+
+
+func (ts *TokenService) notifyIPChange(userGUID, oldIP, newIP string) {
+    if ts.SecurityWebhookURL == "" {
+        return
+    }
+
+    payload := map[string]interface{}{
+        "event_type":    "ip_change",
+        "user_id":       userGUID,
+        "previous_ip":   oldIP,
+        "current_ip":    newIP,
+        "timestamp":    time.Now().UTC().Format(time.RFC3339),
+    }
+
+    jsonData, err := json.Marshal(payload)
+    if err != nil {
+        log.Printf("Failed to marshal webhook payload: %v", err)
+        return
+    }
+
+    resp, err := http.Post(
+        ts.SecurityWebhookURL,
+        "application/json",
+        bytes.NewBuffer(jsonData),
+    )
+    
+    if err != nil {
+        log.Printf("Webhook send error: %v", err)
+        return
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode >= 300 {
+        log.Printf("Webhook responded with status %d", resp.StatusCode)
+    }
+}

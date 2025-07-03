@@ -9,6 +9,7 @@ import (
 type Config struct {
 	DatabaseURL string
 	JWT string
+    SecurityWebhookURL string `mapstructure:"SECURITY_WEBHOOK_URL"`
 }
 
 func LoadConfig() (*Config, error) {

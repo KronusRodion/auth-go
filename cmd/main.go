@@ -24,7 +24,7 @@ func main() {
 	// jwtkey := cfg.JWT
 	jwtkey := "JWTkey"
 
-	mux := routes.SetupRoutes(jwtkey)
+	mux := routes.SetupRoutes(jwtkey, cfg.SecurityWebhookURL)
 
 	log.Println("Server starting on :80...")
 	err = http.ListenAndServe(":80", mux)

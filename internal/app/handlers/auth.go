@@ -33,8 +33,9 @@ func (h *AuthHandler) GetTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to generate refresh token", http.StatusInternalServerError)
 		return
 	}
+	userAgent := r.UserAgent()
 
-	err = h.tokenService.StoreRefreshToken(userGUID, refreshToken, clientIP, r.Context())
+	err = h.tokenService.StoreRefreshToken(userGUID, refreshToken, clientIP, userAgent, r.Context())
 	if err != nil {
 		http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
 		return
@@ -49,17 +50,32 @@ func (h *AuthHandler) GetTokens(w http.ResponseWriter, r *http.Request) {
 	json.NewEncoder(w).Encode(response)
 }
 
+//Деавторизовываем пользователя в конце, если есть ошибка при обновлении токенов
+func checkError(err error, h *AuthHandler, w http.ResponseWriter, r *http.Request) {
+	if err != nil {
+		h.DeAuthorization(w, r)
+	}
+}
+
 func (h *AuthHandler) UpdateTokens(w http.ResponseWriter, r *http.Request) {
-	if err := r.ParseForm(); err != nil {
+	
+	var err error
+	defer checkError(err, h, w, r)
+
+
+	if err = r.ParseForm(); err != nil {
 		http.Error(w, "Invalid request", http.StatusBadRequest)
 		return
 	}
-	
+
+	userAgent := r.UserAgent()
 	refreshToken := r.FormValue("refresh_token")
 	userGUID := r.FormValue("userGUID") 
-	clientIP := getClientIP(r) 
+	clientIP := getClientIP(r)
+
+
 	
-	valid, err := h.tokenService.VerifyRefreshToken(userGUID, refreshToken, clientIP, r.Context())
+	valid, err := h.tokenService.VerifyRefreshToken(userGUID, refreshToken, clientIP, userAgent, r.Context())
 	if err != nil || !valid{
 		log.Printf("Token verification error: %v", err)
 		http.Error(w, "Internal server error", http.StatusInternalServerError)
@@ -77,8 +93,9 @@ func (h *AuthHandler) UpdateTokens(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Failed to generate tokens", http.StatusInternalServerError)
 		return
 	}
-	
-	if err := h.tokenService.StoreRefreshToken(userGUID, newRefresh, clientIP, r.Context()); err != nil {
+
+
+	if err := h.tokenService.StoreRefreshToken(userGUID, newRefresh, clientIP,userAgent, r.Context()); err != nil {
 		http.Error(w, "Failed to store token", http.StatusInternalServerError)
 		return
 	}

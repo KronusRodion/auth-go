@@ -4,6 +4,10 @@ import (
 	"context"
 	"fmt"
 	"log"
+	"os"
+	"path/filepath"
+	"strings"
+
 	"github.com/jackc/pgx/v5/pgxpool"
 )
 
@@ -27,9 +31,50 @@ func Init(dbURL string) error {
 	}
 
 	log.Println("Successfully connected to database")
+
+	if err := runMigrations(); err != nil {
+		return fmt.Errorf("migrations failed: %w", err)
+	}
+
 	return nil
 }
 
 func CloseDB() {
 	DB.Close()
+}
+
+
+
+func runMigrations() error {
+	
+	migrationsDir := filepath.Join("internal", "database", "migrations")
+    migrationFiles := []string{
+        filepath.Join(migrationsDir, "tokens.sql"),
+    }
+
+	for _, file := range migrationFiles {
+		sqlBytes, err := os.ReadFile(file)
+		if err != nil {
+			return fmt.Errorf("failed to read migration file %s: %w", file, err)
+		}
+
+		sql := string(sqlBytes)
+		// Разделяем на отдельные запросы (если файл содержит несколько)
+		queries := strings.Split(sql, ";")
+
+		for _, query := range queries {
+			query = strings.TrimSpace(query)
+			if query == "" {
+				continue
+			}
+
+			if _, err := DB.Exec(context.Background(), query); err != nil {
+				return fmt.Errorf("failed to execute migration from %s: %w\nQuery: %s", file, err, query)
+			}
+		}
+
+		log.Printf("Successfully executed migrations from %s", file)
+	}
+
+	return nil
 }
