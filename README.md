@@ -14,8 +14,8 @@
 1. Убедитесь, что установлены Docker и Docker Compose.
 2. Склонируйте репозиторий:
    ```bash
-   git clone https://github.com/your-repo/auth-service.git 
-   cd auth-service
+   git clone https://github.com/your-repo/auth-go.git 
+   cd auth-go
 
 3. Запуск проекта командой
   - docker-compose -f docker-compose.yml up -d
