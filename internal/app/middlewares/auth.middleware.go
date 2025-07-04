@@ -1,8 +1,9 @@
 package middlewares
 
 import (
-	"net/http"
 	tokens "auth-go/internal/app/services"
+	"log"
+	"net/http"
 )
 
 type AuthMiddleware struct {
@@ -24,8 +25,9 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 	}
 	
 		accessString := r.FormValue("access_token")
+		log.Println("accses token - ", accessString)
 		
-		if m.tokenService.IsTokenInvalid(accessString) {
+		if ok := m.tokenService.IsTokenInvalid(accessString); !ok {
 			http.Error(w, "Token has been revoked", http.StatusUnauthorized)
 			return
 		}
@@ -33,6 +35,7 @@ func (m *AuthMiddleware) Handler(next http.Handler) http.Handler {
 		userID, err := m.tokenService.VerifyAccessToken(accessString)
 		
 		if err != nil || userID == "" {
+			log.Println("Ошибка доступа - ", err, userID)
 			http.Error(w, "Invalid token", http.StatusUnauthorized)
 			return
 		}

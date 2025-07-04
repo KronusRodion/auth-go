@@ -6,6 +6,8 @@ import (
 	"log"
 	"net/http"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 type AuthHandler struct {
@@ -18,8 +20,17 @@ func NewAuthHandler(tokenService *tokens.TokenService) *AuthHandler {
 	}
 }
 
+func stringToUUID(input string) uuid.UUID {
+    namespace := uuid.Nil  // Можно использовать любой UUID как namespace
+    return uuid.NewSHA1(namespace, []byte(input))
+}
+
 func (h *AuthHandler) GetTokens(w http.ResponseWriter, r *http.Request) {
-	userGUID := r.FormValue("userGUID") 
+
+	userUUID := stringToUUID(r.FormValue("userGUID"))
+	userGUID := userUUID.String()
+
+
 	clientIP := r.RemoteAddr
 
 	accessToken, err := h.tokenService.GenerateAccessToken(userGUID, clientIP)
@@ -37,7 +48,8 @@ func (h *AuthHandler) GetTokens(w http.ResponseWriter, r *http.Request) {
 
 	err = h.tokenService.StoreRefreshToken(userGUID, refreshToken, clientIP, userAgent, r.Context())
 	if err != nil {
-		http.Error(w, "Failed to store refresh token", http.StatusInternalServerError)
+		log.Println("Ошибка выдачи токена при сохранении - ", err)
+		http.Error(w, "Failed to store refresh token - ", http.StatusInternalServerError)
 		return
 	}
 
@@ -70,11 +82,10 @@ func (h *AuthHandler) UpdateTokens(w http.ResponseWriter, r *http.Request) {
 
 	userAgent := r.UserAgent()
 	refreshToken := r.FormValue("refresh_token")
-	userGUID := r.FormValue("userGUID") 
+	userGUID := r.FormValue("user_GUID") 
 	clientIP := getClientIP(r)
 
 
-	
 	valid, err := h.tokenService.VerifyRefreshToken(userGUID, refreshToken, clientIP, userAgent, r.Context())
 	if err != nil || !valid{
 		log.Printf("Token verification error: %v", err)
@@ -155,7 +166,14 @@ func (h *AuthHandler) DeAuthorization(w http.ResponseWriter, r *http.Request) {
 	}
 
 
-	h.tokenService.Delete(user_GUID, access, time.Now().Add(15 * time.Minute), r.Context())
+	err = h.tokenService.Delete(user_GUID, access, time.Now().Add(15 * time.Minute), r.Context())
+	if err != nil {
+		log.Println("Ошибка удаления токена! - ", err)
+		http.Error(w, "Failed to deauth", http.StatusInternalServerError)
+	}
+
+	w.WriteHeader(http.StatusOK)
+    w.Write([]byte("Deauthorization successful"))
 }
 
 

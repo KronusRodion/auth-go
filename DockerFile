@@ -11,6 +11,7 @@ RUN apk add --no-cache tzdata
 COPY --from=builder /app/auth-app /auth-app
 COPY --from=builder /app/.env .
 COPY internal/database/migrations /internal/database/migrations
+COPY swagger ./swagger
 EXPOSE 80
 
 CMD ["/auth-app"]

@@ -6,6 +6,8 @@ import (
 	"auth-go/internal/database"
 	"log"
 	"net/http"
+
+	"github.com/rs/cors"
 )
 
 func main() {
@@ -25,9 +27,10 @@ func main() {
 	jwtkey := "JWTkey"
 
 	mux := routes.SetupRoutes(jwtkey, cfg.SecurityWebhookURL)
-
+	handler := cors.AllowAll().Handler(mux)
+	
 	log.Println("Server starting on :80...")
-	err = http.ListenAndServe(":80", mux)
+	err = http.ListenAndServe(":80", handler)
 	if err != nil {
 		log.Fatal("Server error:", err)
 	}
